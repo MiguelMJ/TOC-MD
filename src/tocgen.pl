@@ -41,31 +41,26 @@ substitute(A,B,[A|T1],[B|T2]) :-
     substitute(A,B,T1,T2),!.
 substitute(A,B,[H|T1],[H|T2]) :-
     substitute(A,B,T1,T2).
+    
+parseHeader(Line,C,entry(Level,Text,Link)):-
+    atom_codes(' -#',[Sp,Hy,Al]),
+    atom_codes(Line,Codes),
+    atom_codes(C,CodesC),
+    countAtStart(Al,Codes,Level),
+    eraseFromBeginning([Sp,Al],Codes,Codes2),
+    substitute(Sp,Hy,Codes2,Codes3),
+    append(Codes3,CodesC,CodesLink),
+    atom_codes(Text, Codes2),
+    atom_codes(Link,CodesLink).
 
 %%% SECONDARY ROUTINES %%%
-    
-%%  update_toc(Level:Num, Line:Atom, SubToc:List, Toc:List)
-%   Level:  Header level of the line (0 for body lines)
-%   Line:   Content of the read line
-%   SubToc: Accumulator for the entries,
-%           complex terms with the form entry(Level, Line)
-%   Toc:    Output list with all the entries
-update_toc(0,_,X,X) :- !.
-update_toc(Level,Line,SubToc,[entry(Level,Line)|SubToc]).
 
 %%  writeToc(L:List)
 %   L:  List of entries of the TOC
 %   Writes the formated TOC to stdout
-writeToc([entry(Level, Line)|T]) :-
+writeToc([entry(Level,Text,Link)|T]) :-
     writeRepeat('  ',(Level-1)),
-    % write('- '),
-    atom_codes(' -#',[Sp,Hy,Al]),
-    atom_codes(Line,Codes),
-    eraseFromBeginning([Sp,Al],Codes,Codes2),
-    substitute(Sp,Hy,Codes2,CodesLink),
-    atom_codes(Header,Codes2),
-    atom_codes(Link,[Al|CodesLink]),
-    format('- [~w](~w)\n',[Header,Link]),
+    format('- [~w](#~w)\n',[Text,Link]),
     writeToc(T).
 writeToc([]).
 
@@ -75,26 +70,48 @@ writeToc([]).
 %   label, that will be replaced by the TOC.
 writeBody(['<toc>'|Rest]) :-
     getToc(T),
+    write("<span id=\"toc\"></span>\n\n"),
     writeToc(T),
-    write("\n"),
     writeBody(Rest).
 writeBody([Line|Rest]) :-
+    atom(Line),
+    atom_codes(Line,Codes),
+    atom_codes('#',[Alm]),
+    countAtStart(Alm,Codes,0),!,
     writeln(Line),
     writeBody(Rest).
+writeBody([entry(Level,Text,Link)|Rest]) :-
+    (Level = 1,
+    format('<h~w id="~w">~w<small><a href="#toc"> [TOC]</a></small></h~w> \n',[Level, Link, Text,Level]);
+    Level > 0,
+    format('<h~w id="~w">~w</h~w> \n',[Level, Link, Text,Level])
+    ),
+    writeBody(Rest).
+    
+    
 writeBody([]).
 
 %%% GRAMMAR %%%
 
-%%  file(TOC:List, Body:List)//
+%%  file(C:Number, TOC:List, Body:List)//
+%   C:      Line counter
 %   TOC:    List of entries
 %   Body:   List of all the lines in the file
-file(TOC,[Line|SubContent]) --> 
+file(_,[],[],[],[]).
+file(C, TOC,[NewLine|SubContent]) --> 
+    {NC is C+1},
     line(Level,Line),
-    file(SubToc,SubContent),
+    file(NC,SubToc,SubContent),
             {
-            update_toc(Level,Line,SubToc,TOC)
+            Level = 0, 
+            NewLine = Line,
+            TOC = SubToc;
+            
+            Level > 0, 
+            parseHeader(Line,C,Entry),
+            TOC = [Entry|SubToc],
+            NewLine = Entry
             }.
-file([],[],[],[]).
 
 %%  line(Level:Num,Line:Atom)//
 %   Level:  Number of # at start of the line
@@ -113,7 +130,7 @@ line(Level, Line) -->
 % correct version
 main :-
     current_prolog_flag(argv,[File]), !,
-    Fun = phrase_from_file(file(T,Body), File),
+    Fun = phrase_from_file(file(0, T,Body), File),
     catch(Fun,_,(
         format('Didn\'t find file: ~w',[File]),
         fail
